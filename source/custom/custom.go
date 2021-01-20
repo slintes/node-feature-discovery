@@ -30,10 +30,12 @@ type MatchRule struct {
 	LoadedKMod *rules.LoadedKModRule `json:"loadedKMod,omitempty"`
 	CpuID      *rules.CpuIDRule      `json:"cpuId,omitempty"`
 	Kconfig    *rules.KconfigRule    `json:"kConfig,omitempty"`
+	Hostname   *rules.HostnameRule   `json:"hostname,omitempty"`
 }
 
 type FeatureSpec struct {
 	Name    string      `json:"name"`
+	Value   *string     `json:"value"`
 	MatchOn []MatchRule `json:"matchOn"`
 }
 
@@ -72,6 +74,7 @@ func (s *Source) SetConfig(conf source.Config) {
 func (s Source) Discover() (source.Features, error) {
 	features := source.Features{}
 	allFeatureConfig := append(getStaticFeatureConfig(), *s.config...)
+	allFeatureConfig = append(allFeatureConfig, getConfigMapFeatureConfig()...)
 	log.Printf("INFO: Custom features: %+v", allFeatureConfig)
 	// Iterate over features
 	for _, customFeature := range allFeatureConfig {
@@ -81,7 +84,11 @@ func (s Source) Discover() (source.Features, error) {
 			continue
 		}
 		if featureExist {
-			features[customFeature.Name] = true
+			var value interface{} = true
+			if customFeature.Value != nil {
+				value = *customFeature.Value
+			}
+			features[customFeature.Name] = value
 		}
 	}
 	return features, nil
@@ -134,6 +141,16 @@ func (s Source) discoverFeature(feature FeatureSpec) (bool, error) {
 		// kconfig rule
 		if rule.Kconfig != nil {
 			match, err := rule.Kconfig.Match()
+			if err != nil {
+				return false, err
+			}
+			if !match {
+				continue
+			}
+		}
+		// hostname rule
+		if rule.Hostname != nil {
+			match, err := rule.Hostname.Match()
 			if err != nil {
 				return false, err
 			}
