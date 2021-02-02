@@ -40,6 +40,7 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 
 	master "sigs.k8s.io/node-feature-discovery/pkg/nfd-master"
+	"sigs.k8s.io/node-feature-discovery/source/custom"
 	"sigs.k8s.io/yaml"
 )
 
@@ -165,6 +166,13 @@ func createClusterRole(cs clientset.Interface) (*rbacv1.ClusterRole, error) {
 				APIGroups: []string{""},
 				Resources: []string{"nodes"},
 				Verbs:     []string{"get", "patch", "update"},
+			},
+			{
+				// needed on OpenShift clusters
+				APIGroups:     []string{"security.openshift.io"},
+				Resources:     []string{"securitycontextconstraints"},
+				ResourceNames: []string{"hostaccess"},
+				Verbs:         []string{"use"},
 			},
 		},
 	}
@@ -598,6 +606,121 @@ var _ = framework.KubeDescribe("[NFD] Node Feature Discovery", func() {
 				cleanupNode(f.ClientSet)
 			})
 		})
+
+		//
+		// Test custom hostname source configured in additional ConfigMap
+		//
+		Context("and nfd-workers as a daemonset with an additional configmap for the custom source configured", func() {
+			It("the hostname matching features listed in the configmap should be present", func() {
+				// Remove pre-existing stale annotations and labels
+				cleanupNode(f.ClientSet)
+
+				By("Getting a worker node")
+
+				// We need a valid nodename for the configmap
+				nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(nodeList.Items)).ToNot(BeZero())
+
+				targetNodeName := ""
+				for _, node := range nodeList.Items {
+					for k := range node.Labels {
+						if k == "node-role.kubernetes.io/worker" {
+							targetNodeName = node.Name
+							break
+						}
+					}
+				}
+				Expect(targetNodeName).ToNot(BeEmpty(), "No worker node found")
+
+				// create a wildcard name as well for this node
+				targetNodeNameWildcard := fmt.Sprintf("%s.*%s", targetNodeName[:2], targetNodeName[4:])
+
+				By("Creating the configmap")
+				targetLabelName := "hostname-test"
+				targetLabelValue := "true"
+
+				targetLabelNameWildcard := "hostname-test-wildcard"
+				targetLabelValueWildcard := "customValue"
+				data := make(map[string]string)
+				data["custom.conf"] = `
+- name: ` + targetLabelName + `
+  matchOn:
+  # default value is true
+  - hostname:
+    - ` + targetNodeName + `
+- name: ` + targetLabelNameWildcard + `  
+  value: ` + targetLabelValueWildcard + `
+  matchOn:
+  - hostname:
+    - ` + targetNodeNameWildcard
+
+				cm := &v1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "more-custom-config-" + string(uuid.NewUUID()),
+					},
+					Data: data,
+				}
+				cm, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(context.TODO(), cm, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Creating nfd-worker daemonset with configmap mounted")
+				workerDS := nfdWorkerDaemonSet(fmt.Sprintf("%s:%s", *dockerRepo, *dockerTag), []string{})
+
+				// add configmap mount config
+				volumeName := "more-custom-configs"
+				workerDS.Spec.Template.Spec.Volumes = append(workerDS.Spec.Template.Spec.Volumes, v1.Volume{
+					Name: volumeName,
+					VolumeSource: v1.VolumeSource{
+						ConfigMap: &v1.ConfigMapVolumeSource{
+							LocalObjectReference: v1.LocalObjectReference{
+								Name: cm.Name,
+							},
+						},
+					},
+				})
+				workerDS.Spec.Template.Spec.Containers[0].VolumeMounts = append(workerDS.Spec.Template.Spec.Containers[0].VolumeMounts, v1.VolumeMount{
+					Name:      volumeName,
+					ReadOnly:  true,
+					MountPath: custom.ConfigMapMountDir,
+				})
+
+				workerDS, err = f.ClientSet.AppsV1().DaemonSets(f.Namespace.Name).Create(context.TODO(), workerDS, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Waiting for daemonset pods to be ready")
+				Expect(e2epod.WaitForPodsReady(f.ClientSet, f.Namespace.Name, workerDS.Spec.Template.Labels["name"], 5)).NotTo(HaveOccurred())
+
+				By("Getting target node and checking labels")
+				targetNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), targetNodeName, metav1.GetOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				labelFound := false
+				labelWildcardFound := false
+				for k := range targetNode.Labels {
+					if strings.Contains(k, targetLabelName) {
+						if targetNode.Labels[k] == targetLabelValue {
+							labelFound = true
+						}
+					}
+					if strings.Contains(k, targetLabelNameWildcard) {
+						if targetNode.Labels[k] == targetLabelValueWildcard {
+							labelWildcardFound = true
+						}
+					}
+				}
+
+				Expect(labelFound).To(BeTrue(), "label not found!")
+				Expect(labelWildcardFound).To(BeTrue(), "label for wildcard nodename not found!")
+
+				By("Deleting nfd-worker daemonset")
+				err = f.ClientSet.AppsV1().DaemonSets(f.Namespace.Name).Delete(context.TODO(), workerDS.ObjectMeta.Name, metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				cleanupNode(f.ClientSet)
+			})
+		})
+
 	})
 
 })
