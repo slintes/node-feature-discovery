@@ -195,12 +195,10 @@ data:
     #            vendor: ["15b3"]
     #            device: ["1014", "1017"]
     #          loadedKMod : ["vendor_kmod1", "vendor_kmod2"]
-    #    - name: "feature-by-hostname"
+    #    - name: "feature.by.hostname"
     #      value: customValue
     #      matchOn:
-    #        - hostname:
-    #          - worker-0
-    #          - wo.*r-1
+    #        - hostname: ["worker-0", "my-.*-node"]
 ### <NFD-WORKER-CONF-END-DO-NOT-REMOVE>
 ---
 ## Example for more custom configs in an additional configmap (3/3)
@@ -212,14 +210,10 @@ data:
 #data:
 ## Filename doesn't matter, and there can be multiple. They just need to be unique across all additional ConfigMaps
 #  custom.conf: |
-#  - name: "more-features-by-hostname"
-#    # default value is true
+#  - name: "more.kernel.features"
 #    matchOn:
-#    - hostname:
-#      - worker-0
-#      - worker-1
-#  - name: "more-features-by-hostname-regex"
+#    - loadedKMod: ["example_kmod3"]
+#  - name: "more.features.by.hostname"
 #    value: customValue
 #    matchOn:
-#    - hostname:
-#      - wor.*-0
+#    - hostname: ["special-.*-node-.*"]
