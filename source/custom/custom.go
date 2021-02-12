@@ -18,6 +18,7 @@ package custom
 
 import (
 	"log"
+	"reflect"
 
 	"sigs.k8s.io/node-feature-discovery/source"
 	"sigs.k8s.io/node-feature-discovery/source/custom/rules"
@@ -75,12 +76,12 @@ func (s Source) Discover() (source.Features, error) {
 	features := source.Features{}
 	allFeatureConfig := append(getStaticFeatureConfig(), *s.config...)
 	allFeatureConfig = append(allFeatureConfig, getConfigMapFeatureConfig()...)
-	log.Printf("INFO: Custom features: %+v", allFeatureConfig)
+	log.Printf("INFO: Custom features: %+v\n", allFeatureConfig)
 	// Iterate over features
 	for _, customFeature := range allFeatureConfig {
 		featureExist, err := s.discoverFeature(customFeature)
 		if err != nil {
-			log.Printf("ERROR: failed to discover feature: %q: %s", customFeature.Name, err.Error())
+			log.Printf("ERROR: failed to discover feature: %q: %s\n", customFeature.Name, err.Error())
 			continue
 		}
 		if featureExist {
@@ -98,67 +99,42 @@ func (s Source) Discover() (source.Features, error) {
 // A feature is present if all defined Rules in a MatchRule return a match.
 func (s Source) discoverFeature(feature FeatureSpec) (bool, error) {
 	for _, rule := range feature.MatchOn {
-		// PCI ID rule
-		if rule.PciID != nil {
-			match, err := rule.PciID.Match()
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				continue
-			}
-		}
-		// USB ID rule
-		if rule.UsbID != nil {
-			match, err := rule.UsbID.Match()
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				continue
-			}
-		}
-		// Loaded kernel module rule
-		if rule.LoadedKMod != nil {
-			match, err := rule.LoadedKMod.Match()
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				continue
-			}
-		}
-		// cpuid rule
-		if rule.CpuID != nil {
-			match, err := rule.CpuID.Match()
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				continue
+
+		match := true
+
+		// iterate all fields of the MatchRule
+		r := reflect.ValueOf(rule)
+		for i := 0; i < r.NumField(); i++ {
+			// if we have a public field which isn't nil and implements Rule...
+			f := r.Field(i)
+			if f.CanInterface() {
+				if _, ok := f.Interface().(rules.Rule); ok && !f.IsNil() {
+					log.Printf("DEBUG: evaluating rule %s\n", r.Type().Field(i).Name)
+					// .. call the Match func
+					result := f.MethodByName("Match").Call([]reflect.Value{})
+					// check error
+					if !result[1].IsNil() {
+						log.Printf("DEBUG: error")
+						return false, result[1].Interface().(error)
+					}
+					log.Println("DEBUG: no error")
+					// check match result
+					if !result[0].Bool() {
+						log.Println("DEBUG: no match")
+						match = false
+						break
+					}
+					log.Println("DEBUG: match!")
+				}
 			}
 		}
-		// kconfig rule
-		if rule.Kconfig != nil {
-			match, err := rule.Kconfig.Match()
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				continue
-			}
+
+		if !match {
+			continue
 		}
-		// hostname rule
-		if rule.Hostname != nil {
-			match, err := rule.Hostname.Match()
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				continue
-			}
-		}
+
 		return true, nil
+
 	}
 	return false, nil
 }
