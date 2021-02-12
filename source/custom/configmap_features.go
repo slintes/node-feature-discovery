@@ -65,7 +65,7 @@ func getConfigMapFeatureConfig() []FeatureSpec {
 		}
 		log.Printf("DEBUG: custom config rules raw: %s\n", string(bytes))
 
-		config := &config{}
+		config := &[]FeatureSpec{}
 		err = yaml.UnmarshalStrict(bytes, config)
 		if err != nil {
 			log.Printf("ERROR: could not parse custom config file %s, %v\n", configFile, err)
