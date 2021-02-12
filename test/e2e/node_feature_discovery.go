@@ -642,6 +642,9 @@ var _ = framework.KubeDescribe("[NFD] Node Feature Discovery", func() {
 
 				targetLabelNameWildcard := "hostname-test-wildcard"
 				targetLabelValueWildcard := "customValue"
+
+				targetLabelNameNegative := "hostname-test-negative"
+
 				data := make(map[string]string)
 				data["custom.conf"] = `
 - name: ` + targetLabelName + `
@@ -653,8 +656,12 @@ var _ = framework.KubeDescribe("[NFD] Node Feature Discovery", func() {
   value: ` + targetLabelValueWildcard + `
   matchOn:
   - hostname:
-    - ` + targetNodeNameWildcard
-
+    - ` + targetNodeNameWildcard + `
+- name: ` + targetLabelNameNegative + `  
+  matchOn:
+  - hostname:
+    - "thisNameShouldNeverMatch"
+`
 				cm := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "more-custom-config-" + string(uuid.NewUUID()),
@@ -697,6 +704,7 @@ var _ = framework.KubeDescribe("[NFD] Node Feature Discovery", func() {
 
 				labelFound := false
 				labelWildcardFound := false
+				labelNegativeFound := false
 				for k := range targetNode.Labels {
 					if strings.Contains(k, targetLabelName) {
 						if targetNode.Labels[k] == targetLabelValue {
@@ -708,10 +716,14 @@ var _ = framework.KubeDescribe("[NFD] Node Feature Discovery", func() {
 							labelWildcardFound = true
 						}
 					}
+					if strings.Contains(k, targetLabelNameNegative) {
+						labelNegativeFound = true
+					}
 				}
 
 				Expect(labelFound).To(BeTrue(), "label not found!")
 				Expect(labelWildcardFound).To(BeTrue(), "label for wildcard nodename not found!")
+				Expect(labelNegativeFound).To(BeFalse(), "label for not existing nodename found!")
 
 				By("Deleting nfd-worker daemonset")
 				err = f.ClientSet.AppsV1().DaemonSets(f.Namespace.Name).Delete(context.TODO(), workerDS.ObjectMeta.Name, metav1.DeleteOptions{})
